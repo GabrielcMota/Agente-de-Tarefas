@@ -1,0 +1,742 @@
+{
+  "name": "Agente de Tarefas",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "evolution-tasks",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        16,
+        0
+      ],
+      "id": "c2a098c9-72c1-4df1-8586-7a160dfaeb7d",
+      "name": "Webhook",
+      "webhookId": "07fcd0c5-2788-443e-9a02-f5f441d15fd5"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-pro",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        224,
+        160
+      ],
+      "id": "91778131-c1f9-44ad-a638-0b3dee174cb5",
+      "name": "Gemini",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "1BKloEZqiCXNug3R",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook').item.json.body.data.key.remoteJid }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        160
+      ],
+      "id": "01d4ef43-eb3d-476f-b3c9-aec079dbdca7",
+      "name": "Memory",
+      "credentials": {
+        "postgres": {
+          "id": "HxYi9krYyUXTMqUp",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Atue como um agente de tarefas. Sua função é receber instruções em linguagem natural do usuário (contidas na variável {{ $json.body.data.message.conversation }}) e devolver sempre uma resposta estruturada em JSON, incluindo o identificador único do usuário ({{ $json.body.data.key.remoteJid }}). Responda conforme os exemplos abaixo.\n\nMensagem do usuário:\n{{ $json.body.data.message.conversation }}\n\nIdentificador do usuário:\n{{ $json.body.data.key.remoteJid }}\n\n1. Se o usuário quiser criar uma tarefa, extraia:\n  - ação/descrição\n  - data e hora (se houver)\n  - status: “pendente”\n  - intenção: “criar”\n  - id_usuario: valor contido em {{ $json.body.data.key.remoteJid }}\n\n2. Se o usuário quiser marcar uma tarefa como concluída, extraia:\n  - ação/descrição\n  - data e hora (se mencionada)\n  - status: “concluída”\n  - intenção: “concluir”\n  - id_usuario: valor contido em {{ $json.body.data.key.remoteJid }}\n\n3. Se o usuário quiser listar suas tarefas (ex: “quais minhas tarefas?” ou “listar pendentes”), extraia:\n  - intenção: “listar”\n  - status: se o usuário especificar (“pendentes”, “concluídas”, “todas”), inclua; senão, deixe vazio\n  - outros campos: deixe como string vazia\n  - id_usuario: valor contido em {{ $json.body.data.key.remoteJid }}\n\nFormato padrão:\n{\n  \"id_usuario\": \"...\",\n  \"intencao\": \"criar\" ou \"concluir\" ou \"listar\",\n  \"descricao\": \"...\", \n  \"dataHora\": \"...\",\n  \"status\": \"pendente\", \"concluída\" ou \"\"\n}\n\nExemplo 1: Usuário diz “Preciso estudar n8n amanhã às 15h”\nJSON:\n{\n  \"id_usuario\": \"5511999999999@whatsapp.net\",\n  \"intencao\": \"criar\",\n  \"descricao\": \"estudar n8n\",\n  \"dataHora\": \"YYYY-MM-DDTHH:MM\",\n  \"status\": \"pendente\"\n}\n\nExemplo 2: Usuário diz “terminei de estudar n8n”\nJSON:\n{\n  \"id_usuario\": \"5511999999999@whatsapp.net\",\n  \"intencao\": \"concluir\",\n  \"descricao\": \"estudar n8n\",\n  \"dataHora\": \"\",\n  \"status\": \"concluída\"\n}\n\nExemplo 3: Usuário diz “listar tarefas pendentes”\nJSON:\n{\n  \"id_usuario\": \"5511999999999@whatsapp.net\",\n  \"intencao\": \"listar\",\n  \"descricao\": \"\",\n  \"dataHora\": \"\",\n  \"status\": \"pendente\"\n}\n\nSe não encontrar data/hora, retorne o campo como string vazia.\n\nSempre responda seguindo exatamente este padrão de JSON.\n\nSe a mensagem do usuário não corresponder a nenhuma das intenções acima, responda:\n{\n  \"id_usuario\": \"...\",\n  \"intencao\": \"indefinida\",\n  \"descricao\": \"\",\n  \"dataHora\": \"\",\n  \"status\": \"\"\n}\nRetorne sempre apenas o JSON, sem comentários extras, frases explicativas ou mudanças de estrutura.\n\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "61874037-845e-4e6e-be9a-a1986c717853",
+      "name": "Tradutor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Código para nó \"Code in JavaScript\" — parsing robusto do output do LLM\nreturn items.map(item => {\n  const out = item.json.output;\n  let parsed = null;\n  let raw = out;\n\n  // Se já for objeto, usa direto\n  if (typeof out === 'object' && out !== null) {\n    parsed = out;\n  } else if (typeof out === 'string') {\n    // Remove blocos de código markdown\n    raw = raw.replace(/```(?:json)?\\s*/i, '').replace(/```$/i, '').trim();\n\n    // Tenta parse direto\n    try {\n      parsed = JSON.parse(raw);\n    } catch (e) {\n      // Se falhar, tenta encontrar o primeiro {...} balanceado\n      const match = raw.match(/\\{[\\s\\S]*\\}$/m); // pega do primeiro { até o fim\n      if (match) {\n        const candidate = match[0];\n        try {\n          parsed = JSON.parse(candidate);\n        } catch (e2) {\n          // última tentativa: extrair por parênteses balanceados mais complexos\n          // não temos parser completo — fallback para intencao indefinida\n          parsed = null;\n        }\n      } else {\n        parsed = null;\n      }\n    }\n  }\n\n  // Validação básica do schema\n  const defaultResponse = {\n    id_usuario: item.json?.body?.data?.key?.remoteJid || '',\n    intencao: 'indefinida',\n    descricao: '',\n    dataHora: '',\n    status: ''\n  };\n\n  if (!parsed || typeof parsed !== 'object' || !parsed.intencao) {\n    // retorna esquema padrão 'indefinida'\n    return { json: { ...item.json, output: defaultResponse } };\n  }\n\n  // Normalize fields\n  parsed.id_usuario = parsed.id_usuario || (item.json?.body?.data?.key?.remoteJid || '');\n  parsed.intencao = String(parsed.intencao).toLowerCase().trim();\n  parsed.descricao = parsed.descricao || '';\n  parsed.dataHora = parsed.dataHora || '';\n  parsed.status = parsed.status || (parsed.intencao === 'criar' ? 'pendente' : (parsed.intencao === 'concluir' ? 'concluída' : ''));\n\n  return { json: { ...item.json, output: parsed } };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        0
+      ],
+      "id": "97b073f4-38ad-4299-b628-827bf41a6a03",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output.intencao }}",
+                    "rightValue": "criar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "eb5e967e-7457-4a8a-80f2-9a420eb2d978"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bdbe47be-0ab1-498d-8cfb-c427f5d2010c",
+                    "leftValue": "={{ $json.output.intencao }}",
+                    "rightValue": "concluir",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8bbcfdd9-1a05-444e-ad7b-a213c5274774",
+                    "leftValue": "={{ $json.output.intencao }}",
+                    "rightValue": "listar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        784,
+        -16
+      ],
+      "id": "d4e1d85e-65e3-4e1b-a281-4cc1c8f51223",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "tableId": "pendings",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "user",
+              "fieldValue": "={{ $json.output.id_usuario }}"
+            },
+            {
+              "fieldId": "task",
+              "fieldValue": "={{ $json.output.descricao }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $json.output.status }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        992,
+        -160
+      ],
+      "id": "40334b34-7fc8-403c-898d-8fc1bb5f8f16",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "rhiUkikqkhyYdfIn",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "tarefas",
+        "remoteJid": "={{ $json.user }}",
+        "messageText": "=Beleza! Nova missão adicionada: 🚀\n\n\"{{ $('Switch').item.json.output.descricao }}\"\n\nPrecisa de mais alguma coisa ou quer ver a lista completa?",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        -160
+      ],
+      "id": "da2e955e-ee96-439f-9f0a-43d0a061c4f0",
+      "name": "Enviar texto",
+      "credentials": {
+        "evolutionApi": {
+          "id": "ONdHN30l30CBm3e5",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "tarefas",
+        "remoteJid": "={{ $json.user }}",
+        "messageText": "=Missão cumprida! 🚀\n\nAcabei de tirar {{ $json.task }} das suas pendências.\n\nO que vamos fazer agora? Posso te mandar a lista atualizada ou marcar outra tarefa como concluída. É só falar!",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "6b61f3bd-9141-4eba-a54e-6031eb7e4471",
+      "name": "Enviar texto1",
+      "credentials": {
+        "evolutionApi": {
+          "id": "ONdHN30l30CBm3e5",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "tarefas",
+        "remoteJid": "={{ $json.whatsapp_number }}",
+        "messageText": "={{ $json.formatted_text }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1392,
+        176
+      ],
+      "id": "eb823db4-5846-4464-9e9b-621d8da1d629",
+      "name": "Enviar texto2",
+      "credentials": {
+        "evolutionApi": {
+          "id": "ONdHN30l30CBm3e5",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -16,
+        464
+      ],
+      "id": "781e7b65-b8ee-4a05-b8ba-a672751aa9c5",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "pendings",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "pendente"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        192,
+        464
+      ],
+      "id": "058752c8-6498-4a02-9042-88c9adf79c4e",
+      "name": "Get many rows",
+      "credentials": {
+        "supabaseApi": {
+          "id": "rhiUkikqkhyYdfIn",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nó Code (n8n) — versão com mensagens dinâmicas começando com \"Bom dia!\"\n// ATENÇÃO: defina \"Execute Once = true\" no nó para que `items` contenha todas as rows do Supabase.\n\n// --- Configurações rápidas ---\nconst appendJidSuffix = false; // troque para true se o WAHA precisar de JID (ex: 5511999999999@s.whatsapp.net)\nconst jidSuffix = '@s.whatsapp.net';\n\n// --- Helpers ---\nconst rows = items.map(i => i.json).filter(Boolean);\n\nfunction findUserField(task) {\n  const keys = [\n    'user','id_usuario','idUsuario','whatsapp_number','whatsappNumber',\n    'phone','numero','from','to','remoteJid','jid','remote_jid'\n  ];\n  for (const k of keys) {\n    if (task[k]) return task[k];\n  }\n  if (task.body?.data?.key?.remoteJid) return task.body.data.key.remoteJid;\n  if (task.message?.key?.remoteJid) return task.message.key.remoteJid;\n  if (task.message?.from) return task.message.from;\n  return null;\n}\n\nfunction normalizeNumber(raw) {\n  if (!raw && raw !== 0) return null;\n  let s = String(raw).trim();\n  if (s.includes('@')) return s;\n  const digits = s.replace(/\\D/g, '');\n  return digits || s;\n}\n\nfunction getDescription(t) {\n  return t.task || t.descricao || t.title || t.description || t.name || t.note || '';\n}\nfunction getDate(t) {\n  return t.dataHora || t.data || t.datetime || t.date || t.when || '';\n}\n\n// --- Variações de mensagens para não parecer automática ---\nconst greetings = [\n  \"Bom dia! ☀️ Que tal começar o dia com foco total?\",\n  \"Bom dia! 🌻 Pronto pra encarar as metas de hoje?\",\n  \"Bom dia! 💪 Mais um dia pra conquistar seus objetivos!\",\n  \"Bom dia! 🌞 Vamos fazer esse dia render?\",\n  \"Bom dia! ✨ Energia positiva pra cumprir suas missões!\"\n];\n\nconst outrosFechos = [\n  \"\\n\\nQuando concluir alguma, me avisa pra eu marcar o ✅! Se quiser adicionar algo novo, é só mandar.\",\n  \"\\n\\nConcluiu alguma tarefa? Me chama que atualizo tudo rapidinho ✅\",\n  \"\\n\\nManda um toque quando terminar alguma, beleza? 🚀\",\n  \"\\n\\nTamo junto! Me fala quando quiser marcar algo como concluído 💬\",\n  \"\\n\\nBora pra ação! Assim que concluir algo, me dá um alô. 😉\"\n];\n\n// --- Agrupar por usuário ---\nconst groups = {};\nfor (const r of rows) {\n  const rawUser = findUserField(r);\n  const uid = normalizeNumber(rawUser);\n  if (!uid) continue;\n  if (!groups[uid]) groups[uid] = [];\n  groups[uid].push(r);\n}\n\n// --- Gerar saída por usuário ---\nconst output = [];\nfor (const [uid, tasks] of Object.entries(groups)) {\n  const whatsapp_number = uid;\n  const whatsapp_jid = (appendJidSuffix && !String(uid).includes('@')) ? `${uid}${jidSuffix}` : uid;\n\n  // Escolhe aleatoriamente uma saudação e um fechamento\n  const greeting = greetings[Math.floor(Math.random() * greetings.length)];\n  const closing = outrosFechos[Math.floor(Math.random() * outrosFechos.length)];\n\n  // Construção da mensagem\n  let message = `${greeting}\\n\\n`;\n\n  if (!tasks || tasks.length === 0) {\n    message += \"Sua lista de tarefas está zerada! ✨\\nAproveita o dia pra descansar ou planejar algo novo.\";\n  } else {\n    message += `Aqui estão suas *${tasks.length}* tarefa(s) pendente(s) de hoje:\\n\\n`;\n    for (let i = 0; i < tasks.length; i++) {\n      const t = tasks[i];\n      const desc = String(getDescription(t)).replace(/\\r/g, ' ').trim() || '(sem descrição)';\n      const date = getDate(t);\n      message += `${i + 1}. 🎯 ${desc}${date ? ' — ' + date : ''}\\n`;\n    }\n    message += closing;\n  }\n\n  output.push({\n    json: {\n      whatsapp_number,\n      whatsapp_jid,\n      formatted_text: message,\n      tasks\n    }\n  });\n}\n\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        464
+      ],
+      "id": "72a59793-0ef8-4d91-b277-23f038a28133",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "tarefas",
+        "remoteJid": "={{ $json.whatsapp_number }}",
+        "messageText": "={{ $json.formatted_text }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        896,
+        480
+      ],
+      "id": "b71f1802-b947-4bab-b9a3-68a22c33dd46",
+      "name": "Enviar texto3",
+      "credentials": {
+        "evolutionApi": {
+          "id": "ONdHN30l30CBm3e5",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "pendings",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "user",
+              "condition": "eq",
+              "keyValue": "={{ $json.output.id_usuario }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "pendente"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        992,
+        176
+      ],
+      "id": "b6b9a0c7-6f6e-4afb-857c-28692c1c211a",
+      "name": "Get many rows1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "rhiUkikqkhyYdfIn",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Este código foi feito para ser usado em um nó \"Code\" do n8n.\n// Versão com texto e formatação melhorados para uma experiência mais engajante.\n\n// O n8n passa cada linha como um item separado.\n// Usamos .map() para extrair o objeto .json de cada item e criar um único array.\nconst tasks = items.map(item => item.json);\n\n// Pega o número do usuário do primeiro item.\nconst userNumber = items[0]?.json?.user;\n\n// Se não houver tarefas, retorna uma mensagem motivacional.\nif (!tasks || tasks.length === 0) {\n  return [{\n    json: {\n      whatsapp_number: userNumber || null,\n      formatted_text: \"Sua lista de tarefas está zerada! ✨\\n\\nMomento perfeito para planejar algo novo ou simplesmente relaxar. O que vamos fazer hoje?\"\n    }\n  }];\n}\n\n// Inicia a construção da mensagem de texto com uma saudação mais dinâmica.\nlet message = \"*Opa! Foco total nas suas missões de hoje:* 🚀\\n\\n\";\n\n// Itera sobre cada tarefa no array para adicioná-la à mensagem.\nfor (const task of tasks) {\n  // Usei um emoji de alvo (🎯) para dar uma ideia de \"meta\".\n  message += `🎯 ${task.task}\\n`;\n}\n\n// Adiciona um rodapé mais conversacional e proativo.\nmessage += \"\\nQuando finalizar alguma, me avisa pra eu dar o ✅ aqui! E se pintar algo novo, é só falar.\";\n\n// Retorna o resultado com a mensagem formatada e o número do WhatsApp.\nreturn [{\n  json: {\n    whatsapp_number: userNumber,\n    formatted_text: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        176
+      ],
+      "id": "2c0ece28-ee79-46e8-bbe7-4aef0e665a46",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "pendings",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "pendente"
+            },
+            {
+              "keyName": "task",
+              "condition": "eq",
+              "keyValue": "={{ $json.output.descricao }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "concluída"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        992,
+        0
+      ],
+      "id": "9c1f5cc3-adfd-40e5-9839-539c9797c5d6",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "rhiUkikqkhyYdfIn",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1072,
+        480
+      ],
+      "id": "e7603b5e-466d-4191-982e-2ad849ebea08",
+      "name": "Wait",
+      "webhookId": "7f58768a-d718-4cad-b103-c7daa3111bdc"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        640,
+        464
+      ],
+      "id": "e8ecbcd0-24ee-48f9-b0a5-6c92a3950ed0",
+      "name": "Loop Over Items"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.coolify.site",
+            "user-agent": "axios/1.10.0",
+            "content-length": "905",
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "10.0.1.1",
+            "x-forwarded-host": "n8n.coolify.site",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "f40a9efbd64d",
+            "x-real-ip": "10.0.1.1"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "event": "messages.upsert",
+            "instance": "tarefas",
+            "data": {
+              "key": {
+                "remoteJid": "558699886102@s.whatsapp.net",
+                "fromMe": false,
+                "id": "AC356D892A37199CC3C1D2709B8A997A",
+                "senderLid": "72817295007890@lid"
+              },
+              "pushName": "Mota",
+              "status": "DELIVERY_ACK",
+              "message": {
+                "conversation": "quais as minhas tarefas?",
+                "messageContextInfo": {
+                  "deviceListMetadata": {
+                    "senderKeyHash": "mgBDWZeTBBrf/w==",
+                    "senderTimestamp": "1759699796",
+                    "recipientKeyHash": "ySoFmt6NJIvktQ==",
+                    "recipientTimestamp": "1759667220"
+                  },
+                  "deviceListMetadataVersion": 2,
+                  "messageSecret": "JK6xHos4malw5+MTPskGjzakiuBW91cZwfgizjhEiIw="
+                }
+              },
+              "messageType": "conversation",
+              "messageTimestamp": 1759834698,
+              "instanceId": "ebd58976-444d-41db-ab50-c1042ef9ab41",
+              "source": "android"
+            },
+            "destination": "https://n8n.coolify.site/webhook-test/evolution-tasks",
+            "date_time": "2025-10-07T07:58:19.115Z",
+            "sender": "558699647369@s.whatsapp.net",
+            "server_url": "https://evo.coolify.site",
+            "apikey": "tarefas"
+          },
+          "webhookUrl": "https://n8n.coolify.site/webhook-test/evolution-tasks",
+          "executionMode": "test"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tradutor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Tradutor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Tradutor",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tradutor": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get many rows1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar texto3": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Enviar texto3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1fad3d6-bf8f-4135-83cc-79818b7faec5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a0fcbbcc8f8505229dd5be77c8842a479aae81e930221351884dfdedfde5cb93"
+  },
+  "id": "9IMLV4v8sKN64Qtk",
+  "tags": []
+}
